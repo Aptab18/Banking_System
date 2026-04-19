@@ -1,16 +1,14 @@
 """
-infinite_loop_sim.py — RAM Consumer with Safety Cap + HOLD MODE
-Simulates RAM stress safely for CI/demo use.
-
-NEW BEHAVIOR:
-- RAM target hit hote hi immediately stop nahi karega
-- Target hit hone ke baad memory HOLD karega for --seconds duration
-- Workflow ko time milega current high RAM detect karne ka
-- Phir memory release hogi
+infinite_loop_sim.py — Continuous RAM Stress Generator
+IMPORTANT:
+- Ye script 85% pe stop nahi karegi
+- Ye continuously RAM allocate karegi
+- Workflow / monitor parallel me RAM check karega
+- Jab workflow detect karega ki threshold hit ho gaya, tab workflow process kill karega
 
 Usage:
     python infinite_loop_sim.py
-    python infinite_loop_sim.py --max-percent 85 --seconds 30 --chunk-mb 50
+    python infinite_loop_sim.py --seconds 60 --chunk-mb 20
 """
 
 import time
@@ -19,62 +17,49 @@ import argparse
 import psutil
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--max-percent', type=float, default=85.0,
-                    help='Target RAM %% (default: 85)')
-parser.add_argument('--seconds', type=int, default=30,
-                    help='Target hit hone ke baad kitne seconds RAM hold karni hai (default: 30)')
-parser.add_argument('--chunk-mb', type=int, default=50,
-                    help='Har step mein kitna MB allocate karein (default: 50)')
+parser.add_argument('--seconds', type=int, default=60,
+                    help='Kitne seconds tak stress run karna hai (default: 60)')
+parser.add_argument('--chunk-mb', type=int, default=20,
+                    help='Har step mein kitna MB allocate karein (default: 20)')
 args = parser.parse_args()
 
-print(f"[RAM Stress] Starting...")
-print(f"[RAM Stress] Target RAM: {args.max_percent}%")
-print(f"[RAM Stress] Hold after target: {args.seconds}s")
+print(f"[RAM Stress] Starting continuous RAM stress...")
+print(f"[RAM Stress] Duration: {args.seconds}s")
+print(f"[RAM Stress] Chunk size: {args.chunk_mb} MB")
 print(f"[RAM Stress] Ctrl+C se band karo\n")
 
 memory_hog = []
 chunk_size = args.chunk_mb * 1024 * 1024
 start_time = time.time()
 step = 0
-target_reached = False
 peak_ram = 0.0
 
 try:
-    # Phase 1: Increase RAM until target is reached
     while True:
+        elapsed = time.time() - start_time
+        if elapsed >= args.seconds:
+            print(f"[RAM Stress] ⏰ Time limit reached ({args.seconds}s).")
+            break
+
         current_ram = psutil.virtual_memory().percent
         peak_ram = max(peak_ram, current_ram)
 
-        # If target reached, stop allocating but KEEP memory alive
-        if current_ram >= args.max_percent:
-            print(f"[RAM Stress] 🎯 Target reached! RAM: {current_ram:.1f}% >= {args.max_percent}%")
-            print(f"[RAM Stress] Holding allocated memory for {args.seconds}s so CI can detect high RAM...")
-            target_reached = True
-            break
-
-        # Allocate one chunk
         try:
             chunk = bytearray(chunk_size)
             memory_hog.append(chunk)
             step += 1
             total_mb = step * args.chunk_mb
-            elapsed = time.time() - start_time
             print(f"[RAM Stress] Step {step:3d}: {total_mb:5d} MB | RAM: {current_ram:.1f}% | {elapsed:.1f}s")
         except MemoryError:
-            print("[RAM Stress] ⚠️ MemoryError while allocating. Holding current memory.")
-            target_reached = True
+            print("[RAM Stress] ⚠️ MemoryError reached. Holding current memory until process is killed or timeout.")
+            while (time.time() - start_time) < args.seconds:
+                current_ram = psutil.virtual_memory().percent
+                peak_ram = max(peak_ram, current_ram)
+                print(f"[RAM Stress] Holding... RAM: {current_ram:.1f}%")
+                time.sleep(1)
             break
 
-        time.sleep(0.5)
-
-    # Phase 2: Hold memory so workflow can inspect actual high RAM
-    hold_start = time.time()
-    while time.time() - hold_start < args.seconds:
-        current_ram = psutil.virtual_memory().percent
-        peak_ram = max(peak_ram, current_ram)
-        remaining = args.seconds - int(time.time() - hold_start)
-        print(f"[RAM Stress] Holding... RAM: {current_ram:.1f}% | {remaining}s left")
-        time.sleep(1)
+        time.sleep(0.3)
 
 except KeyboardInterrupt:
     print("\n[RAM Stress] Ctrl+C pressed — stopping.")
@@ -86,10 +71,7 @@ finally:
     print(f"\n[RAM Stress] Peak RAM observed: ~{peak_ram:.1f}%")
     print("[RAM Stress] Releasing allocated memory...")
     memory_hog.clear()
-
-    # Small pause to let OS reclaim memory
     time.sleep(2)
-
     released_ram = psutil.virtual_memory().percent
     print(f"[RAM Stress] Done. RAM released. Current RAM: {released_ram:.1f}%")
     sys.exit(0)
