@@ -5,6 +5,7 @@ on:
     branches: ["**"]
   pull_request:
     branches: [main, master]
+  workflow_dispatch:
 
 jobs:
   build-test-monitor:
@@ -27,13 +28,13 @@ jobs:
           New-Item -ItemType Directory -Path "C:\actions-runner\toolcache" -Force | Out-Null
           New-Item -ItemType Directory -Path "C:\actions-runner\temp" -Force | Out-Null
 
-      # 3. Setup Node
+      # 3. Setup Node.js
       - name: 🟢 Setup Node.js 18
         uses: actions/setup-node@v4
         with:
           node-version: "18"
 
-      # 4. Install dependencies (CMD shell for Windows stability)
+      # 4. Install Node dependencies (CMD shell = more stable on Windows)
       - name: 📦 Install Node Dependencies
         shell: cmd
         working-directory: backend
@@ -44,7 +45,7 @@ jobs:
             npm install
           )
 
-      # 5. Run tests (CMD shell fixes PowerShell NativeCommandError issue)
+      # 5. Run tests (CMD shell avoids PowerShell NativeCommandError issue)
       - name: 🧪 Run Test Suite
         id: run_tests
         timeout-minutes: 5
@@ -54,7 +55,15 @@ jobs:
           npm test > ..\tests.log 2>&1
           type ..\tests.log
 
-      # 6. Verify Python on runner
+      # 6. Upload test logs (always)
+      - name: 📁 Upload Test Logs
+        if: always() && hashFiles('tests.log') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-logs
+          path: tests.log
+
+      # 7. Verify Python on runner (manual install on self-hosted machine)
       - name: 🐍 Verify Python on Runner
         if: steps.run_tests.outcome == 'success'
         shell: powershell
@@ -62,7 +71,7 @@ jobs:
           python --version
           python -m pip --version
 
-      # 7. Install psutil
+      # 8. Install psutil
       - name: 📦 Install psutil
         if: steps.run_tests.outcome == 'success'
         shell: powershell
@@ -70,22 +79,28 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install psutil
 
-      # 8. RAM Stress + Resource Check
+      # 9. RAM Stress + Resource Check (direct psutil-based, reliable)
       - name: 🔍 RAM Stress + Resource Check (psutil)
         id: resource_check
         if: steps.run_tests.outcome == 'success'
         continue-on-error: true
         shell: powershell
         run: |
-          Write-Host "RAM Stress starting (max 90% cap — PC safe rahega)..."
-          $proc = Start-Process python -ArgumentList "backend/scripts/infinite_loop_sim.py","--max-percent","90","--seconds","60" -PassThru -WindowStyle Hidden
+          Write-Host "RAM Stress starting (safe demo mode)..."
 
-          Write-Host "Waiting 40 seconds for RAM to fill..."
-          Start-Sleep -Seconds 40
+          $proc = Start-Process python -ArgumentList "backend/scripts/infinite_loop_sim.py","--max-percent","85","--seconds","30" -PassThru -WindowStyle Hidden
 
-          Write-Host "Checking RAM & Storage..."
-          python backend/scripts/resource_monitor.py
-          $exitCode = $LASTEXITCODE
+          Write-Host "Waiting 15 seconds for RAM to fill..."
+          Start-Sleep -Seconds 15
+
+          Write-Host "Checking current RAM usage using psutil..."
+          $ram = python -c "import psutil; print(psutil.virtual_memory().percent)"
+          $ram = [double]$ram
+
+          Write-Host "Detected RAM usage: $ram%"
+
+          # Save RAM value as GitHub Actions output for next step
+          "ram_percent=$ram" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
           Write-Host "Stopping RAM stress process..."
           if ($proc -and !$proc.HasExited) {
@@ -94,10 +109,18 @@ jobs:
           }
 
           Write-Host "RAM released."
-          exit $exitCode
 
-      # 9a. RAM/Storage Warning
-      - name: 🟠 Notify ESP32 — RAM/Storage Warning
+          # Demo-friendly threshold
+          if ($ram -ge 80) {
+            Write-Host "WARNING: High RAM usage detected!"
+            exit 1
+          } else {
+            Write-Host "RAM usage is safe."
+            exit 0
+          }
+
+      # 10a. RAM Warning
+      - name: 🟠 Notify ESP32 — RAM Warning
         if: steps.run_tests.outcome == 'success' && steps.resource_check.outcome == 'failure'
         continue-on-error: true
         shell: powershell
@@ -125,7 +148,7 @@ jobs:
 
           Write-Host "RAM warning sent to ESP32"
 
-      # 9b. Build Successful
+      # 10b. Build Successful
       - name: 🟢 Notify ESP32 — Build Successful
         if: steps.run_tests.outcome == 'success' && steps.resource_check.outcome == 'success'
         continue-on-error: true
@@ -153,7 +176,7 @@ jobs:
 
           Write-Host "Build success sent to ESP32"
 
-      # 9c. Extract Failure Summary (only if failed)
+      # 10c. Extract Failure Summary (only if tests failed)
       - name: 📝 Extract Failure Summary
         if: always() && steps.run_tests.outcome == 'failure'
         id: extract_summary
@@ -178,7 +201,7 @@ jobs:
           "summary=$summary" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           Write-Host "Captured Summary: $summary"
 
-      # 9d. Notify ESP32 — Build Failed
+      # 10d. Build Failed
       - name: 🔴 Notify ESP32 — Build Failed
         if: always() && steps.run_tests.outcome == 'failure'
         continue-on-error: true
