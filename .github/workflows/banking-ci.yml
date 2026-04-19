@@ -1,0 +1,158 @@
+name: 🏦 PhysiOps Banking CI — ESP32 Hardware Monitor
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  build-test-monitor:
+    name: Build, Test & Notify ESP32
+    runs-on: [self-hosted, Windows, X64]
+
+    steps:
+      # 1. Checkout
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v4
+
+      # 2. Setup Node
+      - name: 🟢 Setup Node.js 18
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+
+      # 3. Install dependencies
+      - name: 📦 Install Node Dependencies
+        shell: powershell
+        working-directory: backend
+        run: |
+          if (Test-Path "package-lock.json") {
+            npm ci
+          } else {
+            npm install
+          }
+
+      # 4. Run tests
+      - name: 🧪 Run Test Suite
+        id: run_tests
+        shell: powershell
+        working-directory: backend
+        run: npm test
+
+      # 5. Setup Python
+      - name: 🐍 Setup Python
+        if: steps.run_tests.outcome == 'success'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # 6. Install psutil
+      - name: 📦 Install psutil
+        if: steps.run_tests.outcome == 'success'
+        shell: powershell
+        run: pip install psutil
+
+      # 7. RAM Stress + Resource Check
+      - name: 🔍 RAM Stress + Resource Check (psutil)
+        id: resource_check
+        if: steps.run_tests.outcome == 'success'
+        continue-on-error: true
+        shell: powershell
+        run: |
+          Write-Host "RAM Stress starting (max 90% cap — PC safe rahega)..."
+          $proc = Start-Process python -ArgumentList "backend/scripts/infinite_loop_sim.py","--max-percent","90","--seconds","60" -PassThru -WindowStyle Hidden
+          Write-Host "Waiting 25 seconds for RAM to fill..."
+          Start-Sleep -Seconds 25
+          Write-Host "Checking RAM & Storage..."
+          python backend/scripts/resource_monitor.py
+          $exitCode = $LASTEXITCODE
+          Write-Host "Stopping RAM stress process..."
+          if (!$proc.HasExited) { $proc.Kill() }
+          Write-Host "RAM released."
+          exit $exitCode
+
+      # 8a. RAM/Storage Warning
+      - name: 🟠 Notify ESP32 — RAM/Storage Warning
+        if: steps.run_tests.outcome == 'success' && steps.resource_check.outcome == 'failure'
+        continue-on-error: true
+        shell: powershell
+        run: |
+          $esp32Ip = "${{ secrets.ESP32_IP }}"
+
+          if ([string]::IsNullOrWhiteSpace($esp32Ip)) {
+            Write-Error "ESP32_IP secret is missing."
+            exit 1
+          }
+
+          $body = @{
+            status = "ram_warning"
+            branch = "${{ github.ref_name }}"
+            commit = "${{ github.sha }}"
+            ram_usage = ${{ steps.resource_check.outputs.ram_percent }}
+          } | ConvertTo-Json -Compress
+
+          Invoke-RestMethod `
+            -Uri "http://$esp32Ip/webhook" `
+            -Method Post `
+            -ContentType "application/json" `
+            -Body $body `
+            -TimeoutSec 5
+
+          Write-Host "RAM warning sent to ESP32"
+
+      # 8b. Build Successful
+      - name: 🟢 Notify ESP32 — Build Successful
+        if: steps.run_tests.outcome == 'success' && steps.resource_check.outcome == 'success'
+        continue-on-error: true
+        shell: powershell
+        run: |
+          $esp32Ip = "${{ secrets.ESP32_IP }}"
+
+          if ([string]::IsNullOrWhiteSpace($esp32Ip)) {
+            Write-Error "ESP32_IP secret is missing."
+            exit 1
+          }
+
+          $body = @{
+            status = "build_success"
+            branch = "${{ github.ref_name }}"
+            commit = "${{ github.sha }}"
+          } | ConvertTo-Json -Compress
+
+          Invoke-RestMethod `
+            -Uri "http://$esp32Ip/webhook" `
+            -Method Post `
+            -ContentType "application/json" `
+            -Body $body `
+            -TimeoutSec 5
+
+          Write-Host "Build success sent to ESP32"
+
+      # 8c. Build Failed
+      - name: 🔴 Notify ESP32 — Build Failed
+        if: always() && steps.run_tests.outcome == 'failure'
+        continue-on-error: true
+        shell: powershell
+        run: |
+          $esp32Ip = "${{ secrets.ESP32_IP }}"
+
+          if ([string]::IsNullOrWhiteSpace($esp32Ip)) {
+            Write-Error "ESP32_IP secret is missing."
+            exit 1
+          }
+
+          $body = @{
+            status = "build_failed"
+            branch = "${{ github.ref_name }}"
+            commit = "${{ github.sha }}"
+          } | ConvertTo-Json -Compress
+
+          Invoke-RestMethod `
+            -Uri "http://$esp32Ip/webhook" `
+            -Method Post `
+            -ContentType "application/json" `
+            -Body $body `
+            -TimeoutSec 5
+
+          Write-Host "Build failed sent to ESP32"
