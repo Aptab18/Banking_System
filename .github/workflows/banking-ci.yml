@@ -194,7 +194,7 @@ jobs:
 
           Write-Host "Build success sent to ESP32"
 
-      # 11. Extract Failure Summary (only if tests failed)
+      # 11. Extract Failure Summary (smart)
       - name: 📝 Extract Failure Summary
         if: always() && steps.run_tests.outcome == 'failure'
         id: extract_summary
@@ -203,9 +203,44 @@ jobs:
           $summary = "Test Execution Failed"
 
           if (Test-Path "tests.log") {
-            $logs = Get-Content "tests.log" -Tail 5
-            if ($logs) {
-              $summary = $logs -join " | "
+            $logs = Get-Content "tests.log"
+
+            # 1) Prefer FAIL line
+            $failLine = $logs | Select-String -Pattern '^FAIL\s+' | Select-Object -First 1
+            if ($failLine) {
+              $summary = $failLine.Line.Trim()
+            }
+
+            # 2) If no FAIL line, prefer Error line
+            if ($summary -eq "Test Execution Failed") {
+              $errorLine = $logs | Select-String -Pattern 'Error:|ERR!|TypeError|ReferenceError|SyntaxError' | Select-Object -First 1
+              if ($errorLine) {
+                $summary = $errorLine.Line.Trim()
+              }
+            }
+
+            # 3) If still nothing, prefer Expected/Received
+            if ($summary -eq "Test Execution Failed") {
+              $assertLine = $logs | Select-String -Pattern 'Expected:|Received:' | Select-Object -First 1
+              if ($assertLine) {
+                $summary = $assertLine.Line.Trim()
+              }
+            }
+
+            # 4) Fallback = last meaningful line (ignore Jest footer junk)
+            if ($summary -eq "Test Execution Failed") {
+              $meaningful = $logs | Where-Object {
+                $_.Trim() -ne "" -and
+                $_ -notmatch 'Tests:\s+\d+' -and
+                $_ -notmatch 'Snapshots:\s+' -and
+                $_ -notmatch 'Time:\s+' -and
+                $_ -notmatch 'Ran all test suites' -and
+                $_ -notmatch 'Force exiting Jest'
+              }
+
+              if ($meaningful.Count -gt 0) {
+                $summary = $meaningful[-1].Trim()
+              }
             }
           }
 
