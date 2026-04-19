@@ -86,85 +86,85 @@ jobs:
         continue-on-error: true
         shell: powershell
         run: |
-          # $threshold = 85
-          # $esp32Ip = "${{ secrets.ESP32_IP }}"
+          $threshold = 85
+          $esp32Ip = "${{ secrets.ESP32_IP }}"
 
-          # if ([string]::IsNullOrWhiteSpace($esp32Ip)) {
-          #   Write-Error "ESP32_IP secret is missing."
-          #   exit 1
-          # }
+          if ([string]::IsNullOrWhiteSpace($esp32Ip)) {
+            Write-Error "ESP32_IP secret is missing."
+            exit 1
+          }
 
-          # Write-Host "Starting RAM stress process..."
-          # $proc = Start-Process python -ArgumentList "backend/scripts/infinite_loop_sim.py","--seconds","60","--chunk-mb","20" -PassThru -WindowStyle Hidden
+          Write-Host "Starting RAM stress process..."
+          $proc = Start-Process python -ArgumentList "backend/scripts/infinite_loop_sim.py","--seconds","60","--chunk-mb","20" -PassThru -WindowStyle Hidden
 
-          # $detected = $false
-          # $ram = 0
+          $detected = $false
+          $ram = 0
 
-          # Write-Host "Monitoring RAM every 1 second... Threshold = $threshold%"
+          Write-Host "Monitoring RAM every 1 second... Threshold = $threshold%"
 
-          # for ($i = 0; $i -lt 60; $i++) {
-          #   Start-Sleep -Seconds 1
+          for ($i = 0; $i -lt 60; $i++) {
+            Start-Sleep -Seconds 1
 
-          #   $ramRaw = python -c "import psutil; print(psutil.virtual_memory().percent)"
-          #   $ramRaw = $ramRaw.Trim()
-          #   $ram = [double]::Parse($ramRaw, [System.Globalization.CultureInfo]::InvariantCulture)
+            $ramRaw = python -c "import psutil; print(psutil.virtual_memory().percent)"
+            $ramRaw = $ramRaw.Trim()
+            $ram = [double]::Parse($ramRaw, [System.Globalization.CultureInfo]::InvariantCulture)
 
-          #   Write-Host "Current RAM: $ram%"
+            Write-Host "Current RAM: $ram%"
 
-          #   if ($ram -ge $threshold) {
-          #     Write-Host "🚨 Threshold hit! RAM = $ram%"
+            if ($ram -ge $threshold) {
+              Write-Host "🚨 Threshold hit! RAM = $ram%"
 
-          #     # Save RAM for future steps / debugging
-          #     "ram_percent=$ram" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+              # Save RAM for future steps / debugging
+              "ram_percent=$ram" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
-          #     # Send ESP32 signal IMMEDIATELY
-          #     $body = @{
-          #       status = "ram_warning"
-          #       branch = "${{ github.ref_name }}"
-          #       commit = "${{ github.sha }}"
-          #       ram_usage = "$ram"
-          #     } | ConvertTo-Json -Compress
+              # Send ESP32 signal IMMEDIATELY
+              $body = @{
+                status = "ram_warning"
+                branch = "${{ github.ref_name }}"
+                commit = "${{ github.sha }}"
+                ram_usage = "$ram"
+              } | ConvertTo-Json -Compress
 
-          #     Write-Host "Sending immediate RAM warning to ESP32..."
-          #     Write-Host "Payload: $body"
+              Write-Host "Sending immediate RAM warning to ESP32..."
+              Write-Host "Payload: $body"
 
-          #     try {
-          #       $response = Invoke-RestMethod `
-          #         -Uri "http://$esp32Ip/webhook" `
-          #         -Method Post `
-          #         -ContentType "application/json" `
-          #         -Body $body `
-          #         -TimeoutSec 10
+              try {
+                $response = Invoke-RestMethod `
+                  -Uri "http://$esp32Ip/webhook" `
+                  -Method Post `
+                  -ContentType "application/json" `
+                  -Body $body `
+                  -TimeoutSec 10
 
-          #       Write-Host "ESP32 response:"
-          #       Write-Host $response
-          #       Write-Host "✅ RAM warning sent immediately."
-          #     }
-          #     catch {
-          #       Write-Error "❌ Failed to send RAM warning to ESP32: $($_.Exception.Message)"
-          #     }
+                Write-Host "ESP32 response:"
+                Write-Host $response
+                Write-Host "✅ RAM warning sent immediately."
+              }
+              catch {
+                Write-Error "❌ Failed to send RAM warning to ESP32: $($_.Exception.Message)"
+              }
 
-          #     $detected = $true
-          #     break
-          #   }
-          # }
+              $detected = $true
+              break
+            }
+          }
 
-          # Write-Host "Stopping RAM stress process..."
-          # if ($proc -and !$proc.HasExited) {
-          #   $proc.Kill()
-          #   $proc.WaitForExit()
-          # }
+          Write-Host "Stopping RAM stress process..."
+          if ($proc -and !$proc.HasExited) {
+            $proc.Kill()
+            $proc.WaitForExit()
+          }
 
-          # Write-Host "RAM stress process stopped."
+          Write-Host "RAM stress process stopped."
 
-          # if ($detected) {
-          #   Write-Host "Threshold was detected and ESP32 alert was attempted."
-          #   exit 1
-          # } else {
-          #   Write-Host "Threshold not reached within monitoring window."
-          #   "ram_percent=$ram" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
-          #   exit 0
-          # }
+          if ($detected) {
+            Write-Host "Threshold was detected and ESP32 alert was attempted."
+            exit 1
+          } else {
+            Write-Host "Threshold not reached within monitoring window."
+            "ram_percent=$ram" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+            exit 0
+          }
 
       # 10. Build Successful (only if tests passed and RAM threshold NOT hit)
       - name: 🟢 Notify ESP32 — Build Successful
@@ -194,7 +194,7 @@ jobs:
 
           Write-Host "Build success sent to ESP32"
 
-      # 11. Extract Failure Summary (smart)
+      # 11. Extract Failure Summary (server.js focused + ESP32 friendly)
       - name: 📝 Extract Failure Summary
         if: always() && steps.run_tests.outcome == 'failure'
         id: extract_summary
@@ -205,41 +205,64 @@ jobs:
           if (Test-Path "tests.log") {
             $logs = Get-Content "tests.log"
 
-            # 1) Prefer FAIL line
-            $failLine = $logs | Select-String -Pattern '^FAIL\s+' | Select-Object -First 1
-            if ($failLine) {
-              $summary = $failLine.Line.Trim()
+            # Detect specific root causes first (best for ESP32 display)
+            if ($logs -match 'Cannot find module') {
+              $summary = "Module path error"
             }
-
-            # 2) If no FAIL line, prefer Error line
-            if ($summary -eq "Test Execution Failed") {
-              $errorLine = $logs | Select-String -Pattern 'Error:|ERR!|TypeError|ReferenceError|SyntaxError' | Select-Object -First 1
-              if ($errorLine) {
-                $summary = $errorLine.Line.Trim()
-              }
+            elseif ($logs -match 'EADDRINUSE') {
+              $summary = "Port already in use"
             }
-
-            # 3) If still nothing, prefer Expected/Received
-            if ($summary -eq "Test Execution Failed") {
-              $assertLine = $logs | Select-String -Pattern 'Expected:|Received:' | Select-Object -First 1
-              if ($assertLine) {
-                $summary = $assertLine.Line.Trim()
-              }
+            elseif ($logs -match 'ECONNREFUSED') {
+              $summary = "Connection refused"
             }
-
-            # 4) Fallback = last meaningful line (ignore Jest footer junk)
-            if ($summary -eq "Test Execution Failed") {
-              $meaningful = $logs | Where-Object {
-                $_.Trim() -ne "" -and
-                $_ -notmatch 'Tests:\s+\d+' -and
-                $_ -notmatch 'Snapshots:\s+' -and
-                $_ -notmatch 'Time:\s+' -and
-                $_ -notmatch 'Ran all test suites' -and
-                $_ -notmatch 'Force exiting Jest'
+            elseif ($logs -match 'backend[/\\]server\.js|server\.js') {
+              $summary = "server.js runtime error"
+            }
+            else {
+              # 1) Prefer server.js stack/error line
+              $serverLine = $logs | Select-String -Pattern 'server\.js|backend[/\\]server\.js' | Select-Object -First 1
+              if ($serverLine) {
+                $summary = $serverLine.Line.Trim()
               }
 
-              if ($meaningful.Count -gt 0) {
-                $summary = $meaningful[-1].Trim()
+              # 2) Prefer common root-cause errors
+              if ($summary -eq "Test Execution Failed") {
+                $rootError = $logs | Select-String -Pattern 'Cannot find module|EADDRINUSE|ECONNREFUSED|TypeError|ReferenceError|SyntaxError|Error:' | Select-Object -First 1
+                if ($rootError) {
+                  $summary = $rootError.Line.Trim()
+                }
+              }
+
+              # 3) If still nothing, prefer FAIL line
+              if ($summary -eq "Test Execution Failed") {
+                $failLine = $logs | Select-String -Pattern '^FAIL\s+' | Select-Object -First 1
+                if ($failLine) {
+                  $summary = $failLine.Line.Trim()
+                }
+              }
+
+              # 4) If still nothing, prefer Expected/Received
+              if ($summary -eq "Test Execution Failed") {
+                $assertLine = $logs | Select-String -Pattern 'Expected:|Received:' | Select-Object -First 1
+                if ($assertLine) {
+                  $summary = $assertLine.Line.Trim()
+                }
+              }
+
+              # 5) Fallback = last meaningful line (ignore Jest footer junk)
+              if ($summary -eq "Test Execution Failed") {
+                $meaningful = $logs | Where-Object {
+                  $_.Trim() -ne "" -and
+                  $_ -notmatch 'Tests:\s+\d+' -and
+                  $_ -notmatch 'Snapshots:\s+' -and
+                  $_ -notmatch 'Time:\s+' -and
+                  $_ -notmatch 'Ran all test suites' -and
+                  $_ -notmatch 'Force exiting Jest'
+                }
+
+                if ($meaningful.Count -gt 0) {
+                  $summary = $meaningful[-1].Trim()
+                }
               }
             }
           }
@@ -247,8 +270,8 @@ jobs:
           # Clean up summary for GitHub output / JSON safety
           $summary = $summary -replace '"', '' -replace "'", "" -replace "`n", " " -replace "`r", ""
 
-          if ($summary.Length -gt 150) {
-            $summary = $summary.Substring(0, 147) + "..."
+          if ($summary.Length -gt 100) {
+            $summary = $summary.Substring(0, 97) + "..."
           }
 
           "summary=$summary" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
