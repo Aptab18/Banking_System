@@ -90,8 +90,8 @@ jobs:
 
           $proc = Start-Process python -ArgumentList "backend/scripts/infinite_loop_sim.py","--max-percent","85","--seconds","30" -PassThru -WindowStyle Hidden
 
-          Write-Host "Waiting 15 seconds for RAM to fill..."
-          Start-Sleep -Seconds 15
+          Write-Host "Waiting 40 seconds for RAM to fill..."
+          Start-Sleep -Seconds 40
 
           Write-Host "Checking current RAM usage using psutil..."
           $ram = python -c "import psutil; print(psutil.virtual_memory().percent)"
