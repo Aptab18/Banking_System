@@ -63,7 +63,7 @@ jobs:
           name: test-logs
           path: tests.log
 
-      # 7. Verify Python on runner (manual install on self-hosted machine)
+      # 7. Verify Python on runner
       - name: 🐍 Verify Python on Runner
         if: steps.run_tests.outcome == 'success'
         shell: powershell
@@ -79,52 +79,14 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install psutil
 
-      # 9. RAM Stress + Resource Check (direct psutil-based, reliable)
-      - name: 🔍 RAM Stress + Resource Check (psutil)
+      # 9. RAM Stress + Immediate ESP32 Alert
+      - name: 🔍 RAM Stress + Immediate ESP32 Alert
         id: resource_check
         if: steps.run_tests.outcome == 'success'
         continue-on-error: true
         shell: powershell
         run: |
-          Write-Host "RAM Stress starting (safe demo mode)..."
-
-          $proc = Start-Process python -ArgumentList "backend/scripts/infinite_loop_sim.py","--max-percent","85","--seconds","30" -PassThru -WindowStyle Hidden
-
-          Write-Host "Waiting 40 seconds for RAM to fill..."
-          Start-Sleep -Seconds 40
-
-          Write-Host "Checking current RAM usage using psutil..."
-          $ram = python -c "import psutil; print(psutil.virtual_memory().percent)"
-          $ram = [double]$ram
-
-          Write-Host "Detected RAM usage: $ram%"
-
-          # Save RAM value as GitHub Actions output for next step
-          "ram_percent=$ram" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
-
-          Write-Host "Stopping RAM stress process..."
-          if ($proc -and !$proc.HasExited) {
-            $proc.Kill()
-            $proc.WaitForExit()
-          }
-
-          Write-Host "RAM released."
-
-          # Demo-friendly threshold
-          if ($ram -ge 80) {
-            Write-Host "WARNING: High RAM usage detected!"
-            exit 1
-          } else {
-            Write-Host "RAM usage is safe."
-            exit 0
-          }
-
-      # 10a. RAM Warning
-      - name: 🟠 Notify ESP32 — RAM Warning
-        if: steps.run_tests.outcome == 'success' && steps.resource_check.outcome == 'failure'
-        continue-on-error: true
-        shell: powershell
-        run: |
+          $threshold = 85
           $esp32Ip = "${{ secrets.ESP32_IP }}"
 
           if ([string]::IsNullOrWhiteSpace($esp32Ip)) {
@@ -132,23 +94,79 @@ jobs:
             exit 1
           }
 
-          $body = @{
-            status = "ram_warning"
-            branch = "${{ github.ref_name }}"
-            commit = "${{ github.sha }}"
-            ram_usage = "${{ steps.resource_check.outputs.ram_percent }}"
-          } | ConvertTo-Json -Compress
+          Write-Host "Starting RAM stress process..."
+          $proc = Start-Process python -ArgumentList "backend/scripts/infinite_loop_sim.py","--seconds","60","--chunk-mb","20" -PassThru -WindowStyle Hidden
 
-          Invoke-RestMethod `
-            -Uri "http://$esp32Ip/webhook" `
-            -Method Post `
-            -ContentType "application/json" `
-            -Body $body `
-            -TimeoutSec 5
+          $detected = $false
+          $ram = 0
 
-          Write-Host "RAM warning sent to ESP32"
+          Write-Host "Monitoring RAM every 1 second... Threshold = $threshold%"
 
-      # 10b. Build Successful
+          for ($i = 0; $i -lt 60; $i++) {
+            Start-Sleep -Seconds 1
+
+            $ramRaw = python -c "import psutil; print(psutil.virtual_memory().percent)"
+            $ramRaw = $ramRaw.Trim()
+            $ram = [double]::Parse($ramRaw, [System.Globalization.CultureInfo]::InvariantCulture)
+
+            Write-Host "Current RAM: $ram%"
+
+            if ($ram -ge $threshold) {
+              Write-Host "🚨 Threshold hit! RAM = $ram%"
+
+              # Save RAM for future steps / debugging
+              "ram_percent=$ram" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+              # Send ESP32 signal IMMEDIATELY
+              $body = @{
+                status = "ram_warning"
+                branch = "${{ github.ref_name }}"
+                commit = "${{ github.sha }}"
+                ram_usage = "$ram"
+              } | ConvertTo-Json -Compress
+
+              Write-Host "Sending immediate RAM warning to ESP32..."
+              Write-Host "Payload: $body"
+
+              try {
+                $response = Invoke-RestMethod `
+                  -Uri "http://$esp32Ip/webhook" `
+                  -Method Post `
+                  -ContentType "application/json" `
+                  -Body $body `
+                  -TimeoutSec 10
+
+                Write-Host "ESP32 response:"
+                Write-Host $response
+                Write-Host "✅ RAM warning sent immediately."
+              }
+              catch {
+                Write-Error "❌ Failed to send RAM warning to ESP32: $($_.Exception.Message)"
+              }
+
+              $detected = $true
+              break
+            }
+          }
+
+          Write-Host "Stopping RAM stress process..."
+          if ($proc -and !$proc.HasExited) {
+            $proc.Kill()
+            $proc.WaitForExit()
+          }
+
+          Write-Host "RAM stress process stopped."
+
+          if ($detected) {
+            Write-Host "Threshold was detected and ESP32 alert was attempted."
+            exit 1
+          } else {
+            Write-Host "Threshold not reached within monitoring window."
+            "ram_percent=$ram" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+            exit 0
+          }
+
+      # 10. Build Successful (only if tests passed and RAM threshold NOT hit)
       - name: 🟢 Notify ESP32 — Build Successful
         if: steps.run_tests.outcome == 'success' && steps.resource_check.outcome == 'success'
         continue-on-error: true
@@ -176,7 +194,7 @@ jobs:
 
           Write-Host "Build success sent to ESP32"
 
-      # 10c. Extract Failure Summary (only if tests failed)
+      # 11. Extract Failure Summary (only if tests failed)
       - name: 📝 Extract Failure Summary
         if: always() && steps.run_tests.outcome == 'failure'
         id: extract_summary
@@ -201,7 +219,7 @@ jobs:
           "summary=$summary" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           Write-Host "Captured Summary: $summary"
 
-      # 10d. Build Failed
+      # 12. Build Failed (only if tests failed)
       - name: 🔴 Notify ESP32 — Build Failed
         if: always() && steps.run_tests.outcome == 'failure'
         continue-on-error: true
