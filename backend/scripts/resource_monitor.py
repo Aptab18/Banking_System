@@ -65,16 +65,19 @@ if report["disk"]["warning"]:
     warnings.append(f"Disk at {disk_percent}% ({disk_used_gb}/{disk_total_gb} GB)")
 
 if warnings:
+    summary = " | ".join(warnings)
     if "GITHUB_OUTPUT" in os.environ:
         with open(os.environ["GITHUB_OUTPUT"], "a") as f:
             f.write(f"ram_percent={int(ram_percent)}\n")
-    print(f"\n[WARNING] Resource threshold exceeded: {' | '.join(warnings)}", file=sys.stderr)
+            f.write(f"summary={summary}\n")
+    print(f"\n[WARNING] Resource threshold exceeded: {summary}", file=sys.stderr)
     print("[WARNING] Possible infinite loop or resource leak in this build!", file=sys.stderr)
     sys.exit(1)
 
 if "GITHUB_OUTPUT" in os.environ:
     with open(os.environ["GITHUB_OUTPUT"], "a") as f:
         f.write(f"ram_percent={int(ram_percent)}\n")
+        f.write("summary=Resources stable\n")
 
 print(f"\n[OK] RAM: {ram_percent}% | Disk: {disk_percent}% — within limits.")
 sys.exit(0)
