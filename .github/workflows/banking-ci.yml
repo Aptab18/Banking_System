@@ -80,8 +80,8 @@ jobs:
           Write-Host "RAM Stress starting (max 90% cap — PC safe rahega)..."
           $proc = Start-Process python -ArgumentList "backend/scripts/infinite_loop_sim.py","--max-percent","90","--seconds","60" -PassThru -WindowStyle Hidden
 
-          Write-Host "Waiting 25 seconds for RAM to fill..."
-          Start-Sleep -Seconds 25
+          Write-Host "Waiting 40 seconds for RAM to fill..."
+          Start-Sleep -Seconds 40
 
           Write-Host "Checking RAM & Storage..."
           python backend/scripts/resource_monitor.py
