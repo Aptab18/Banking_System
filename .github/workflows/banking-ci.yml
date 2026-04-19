@@ -36,9 +36,12 @@ jobs:
       # 4. Run tests
       - name: 🧪 Run Test Suite
         id: run_tests
+        timeout-minutes: 5
         shell: powershell
         working-directory: backend
-        run: npm test
+        run: |
+          # Use Tee-Object to capture logs while still outputting to console
+          npm test 2>&1 | Tee-Object -FilePath "../tests.log"
 
       # 5. Setup Python
       - name: 🐍 Setup Python
@@ -129,7 +132,26 @@ jobs:
 
           Write-Host "Build success sent to ESP32"
 
-      # 8c. Build Failed
+      # 8c. Extract Failure Summary (only if failed)
+      - name: 📝 Extract Failure Summary
+        if: always() && steps.run_tests.outcome == 'failure'
+        id: extract_summary
+        shell: powershell
+        run: |
+            $summary = "Test Execution Failed"
+            if (Test-Path "tests.log") {
+                $logs = Get-Content "tests.log" -Tail 5
+                if ($logs) {
+                    $summary = $logs -join " | "
+                }
+            }
+            # Clean up summary for JSON (remove backticks or double quotes that break JSON)
+            $summary = $summary -replace '"', '' -replace "'", "" -replace "`n", " " -replace "`r", ""
+            if ($summary.Length -gt 150) { $summary = $summary.Substring(0, 147) + "..." }
+            echo "summary=$summary" >> $env:GITHUB_OUTPUT
+            Write-Host "Captured Summary: $summary"
+
+      # 8d. Notify ESP32 — Build Failed
       - name: 🔴 Notify ESP32 — Build Failed
         if: always() && steps.run_tests.outcome == 'failure'
         continue-on-error: true
@@ -146,6 +168,7 @@ jobs:
             status = "build_failed"
             branch = "${{ github.ref_name }}"
             commit = "${{ github.sha }}"
+            summary = "${{ steps.extract_summary.outputs.summary }}"
           } | ConvertTo-Json -Compress
 
           Invoke-RestMethod `

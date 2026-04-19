@@ -20,6 +20,7 @@
  */
 
 #include <WiFi.h>
+#include <HTTPClient.h>
 #include <WebServer.h>
 #include <ArduinoJson.h>
 #include <ESP32Servo.h>
@@ -69,6 +70,38 @@ void setRamWarning() {
   Serial.println("[STATUS] RAM/Storage Warning — Buzzer ON, LEDs blinking");
 }
 
+// ── Helper: Forward to Local PC Dashboard ────────────────────────────────────
+void forwardToDashboard(String status, String summary, String branch, String commit, float ramUsage = 0, String culprit = "None") {
+  if (WiFi.status() == WL_CONNECTED) {
+    HTTPClient http;
+    String url = "http://" + String(DASHBOARD_IP) + ":" + String(DASHBOARD_PORT) + "/api/ci-status";
+    
+    Serial.print("[RELAY] Forwarding to Dashboard: "); Serial.println(url);
+    
+    http.begin(url);
+    http.addHeader("Content-Type", "application/json");
+    
+    StaticJsonDocument<512> doc;
+    doc["status"]    = status;
+    doc["branch"]    = branch;
+    doc["commit"]    = commit;
+    doc["summary"]   = summary;
+    doc["ram_usage"] = ramUsage;
+    doc["culprit"]   = culprit;
+    
+    String payload;
+    serializeJson(doc, payload);
+    
+    int httpResponseCode = http.POST(payload);
+    if (httpResponseCode > 0) {
+      Serial.printf("[RELAY] Success, response code: %d\n", httpResponseCode);
+    } else {
+      Serial.printf("[RELAY] Error code: %d\n", httpResponseCode);
+    }
+    http.end();
+  }
+}
+
 // ── HTTP Handler: POST /webhook ───────────────────────────────────────────────
 void handleWebhook() {
   if (server.method() != HTTP_POST) {
@@ -87,7 +120,12 @@ void handleWebhook() {
     return;
   }
 
-  const char* status = doc["status"];
+  const char* status  = doc["status"];
+  const char* branch  = doc["branch"]  | "unknown";
+  const char* commit  = doc["commit"]  | "unknown";
+  const char* summary = doc["summary"] | "No details provided";
+  float ram_usage     = doc["ram_usage"] | 0;
+
   if (!status) {
     server.send(400, "application/json", "{\"error\":\"Missing 'status' field\"}");
     return;
@@ -104,6 +142,9 @@ void handleWebhook() {
     server.send(400, "application/json", "{\"error\":\"Unknown status value\"}");
     return;
   }
+
+  // Forward to Local Dashboard
+  forwardToDashboard(status, summary, branch, commit, ram_usage);
 
   // Respond OK
   String resp = "{\"ok\":true,\"status\":\"" + currentStatus + "\"}";

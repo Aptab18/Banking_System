@@ -28,6 +28,10 @@
 // ── Server Config ─────────────────────────────────────────────────────────────
 #define HTTP_PORT       80        // ESP32 HTTP server port
 
+// ── Dashboard Forwarding Config (Local PC) ────────────────────────────────────
+#define DASHBOARD_IP    "192.168.10.3" // Local PC IP
+#define DASHBOARD_PORT  3001           // Dashboard Backend Port
+
 // ── Component Behavior ────────────────────────────────────────────────────────
 // IR sensor silences buzzer when output goes LOW (object/hand detected)
 // Most IR sensors: LOW = object detected, HIGH = no object
