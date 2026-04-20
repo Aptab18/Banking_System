@@ -9,7 +9,7 @@ const ciStatusRouter = require('./routes/ci-status');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-this_is_not_valid_javascript!!!
+//this_is_not_valid_javascript!!!
 
 // ── Middleware ──────────────────────────────────────────────────────────────
 app.use(cors());
