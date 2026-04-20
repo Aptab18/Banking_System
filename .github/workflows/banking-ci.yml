@@ -122,6 +122,7 @@ jobs:
                 status = "ram_warning"
                 branch = "${{ github.ref_name }}"
                 commit = "${{ github.sha }}"
+                summary = "RAM usage: $ram%"
                 ram_usage = "$ram"
               } | ConvertTo-Json -Compress
 
