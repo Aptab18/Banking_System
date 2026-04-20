@@ -123,7 +123,7 @@ jobs:
                 branch = "${{ github.ref_name }}"
                 commit = "${{ github.sha }}"
                 summary = "RAM usage: $ram%"
-                ram_usage = "$ram"
+                ram_usage = $ram
               } | ConvertTo-Json -Compress
 
               Write-Host "Sending immediate RAM warning to ESP32..."
